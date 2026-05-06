@@ -4,11 +4,31 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 API_URL = "https://virtualtop.alwaysdata.net/index.php" 
 BETFLAG_URL = "https://www.betflag.it/virtual" 
 
-# Configurazione per Render
+# === FAKE WEB SERVER (per tenere Render attivo) ===
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'Scraper is running!')
+    
+    def log_message(self, format, *args):
+        pass  # Silenzia i log del server
+
+def run_webserver():
+    server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
+    server.serve_forever()
+
+# Avvia il web server in background
+Thread(target=run_webserver, daemon=True).start()
+print("[WEB] Server fittizio avviato sulla porta 10000")
+
+# === IL TUO SCRAPER ORIGINALE ===
 chrome_options = Options()
 chrome_options.add_argument("--headless")
 chrome_options.add_argument("--no-sandbox")
@@ -68,7 +88,6 @@ def esegui_scansione():
                 print(f"Errore evento: {e}")
                 continue
 
-        # Risultati
         chiusi = driver.find_elements(By.CLASS_NAME, "box-close")
         for box in chiusi:
             try:
@@ -87,7 +106,7 @@ def esegui_scansione():
         print(f"Errore generale: {e}")
 
 if __name__ == "__main__":
-    print("=== VirtualPRO Scraper su Render ===")
+    print("=== VirtualPRO Scraper su Render (Web Service Mode) ===")
     while True:
         try:
             esegui_scansione()
