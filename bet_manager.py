@@ -6,45 +6,67 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import sys
+import traceback
 
 API_URL = "https://virtualtop.alwaysdata.net/index.php" 
 BETFLAG_URL = "https://www.betflag.it/virtual" 
 
-# === FAKE WEB SERVER (per tenere Render attivo) ===
+print("=== AVVIO SERVIZIO RENDER ===", flush=True)
+print(f"Python version: {sys.version}", flush=True)
+
+# === FAKE WEB SERVER ===
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'Scraper is running!')
-    
     def log_message(self, format, *args):
-        pass  # Silenzia i log del server
+        pass
 
 def run_webserver():
-    server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
-    server.serve_forever()
+    try:
+        server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
+        print("[WEB] Server avviato sulla porta 10000", flush=True)
+        server.serve_forever()
+    except Exception as e:
+        print(f"[WEB] ERRORE: {e}", flush=True)
 
-# Avvia il web server in background
 Thread(target=run_webserver, daemon=True).start()
-print("[WEB] Server fittizio avviato sulla porta 10000")
 
-# === IL TUO SCRAPER ORIGINALE ===
+# === CONFIGURAZIONE CHROME ===
+print("[SETUP] Configuro Chrome...", flush=True)
 chrome_options = Options()
 chrome_options.add_argument("--headless")
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920x1080")
 
-driver = webdriver.Chrome(options=chrome_options)
+# Tentativo di specificare il binary di Chrome (Render lo mette qui)
+chrome_options.binary_location = '/usr/bin/google-chrome'
+
+try:
+    driver = webdriver.Chrome(options=chrome_options)
+    print("[SETUP] Chrome avviato con successo!", flush=True)
+except Exception as e:
+    print(f"[SETUP] ERRORE Chrome: {e}", flush=True)
+    print(f"[SETUP] Traceback: {traceback.format_exc()}", flush=True)
+    driver = None
 
 def esegui_scansione():
-    print(f"\n--- Analisi: {time.strftime('%H:%M:%S')} ---")
+    if driver is None:
+        print("[ERRORE] Driver Chrome non disponibile", flush=True)
+        return
+        
+    print(f"\n--- Analisi: {time.strftime('%H:%M:%S')} ---", flush=True)
     try:
+        print(f"[DEBUG] Carico {BETFLAG_URL}...", flush=True)
         driver.get(BETFLAG_URL)
         time.sleep(10)
-
+        
         eventi = driver.find_elements(By.CLASS_NAME, "box-home.event")
-        print(f"Trovati {len(eventi)} eventi")
+        print(f"[DEBUG] Trovati {len(eventi)} eventi", flush=True)
         
         for event in eventi:
             try:
@@ -75,20 +97,22 @@ def esegui_scansione():
                 if not q1 or q1 in ["0", "0.00", "0,00"]: 
                     continue
 
-                requests.post(API_URL, data={
+                r = requests.post(API_URL, data={
                     'palinsesto': pal_id,
                     'home': home,
                     'bookmaker': bookmaker,
                     'q1': q1.replace(',', '.'),
                     'qx': qx.replace(',', '.'),
                     'q2': q2.replace(',', '.')
-                })
-                print(f"[OK] Inviato: {home} ({bookmaker}) - {q1}/{qx}/{q2}")
+                }, timeout=10)
+                print(f"[OK] {home} ({bookmaker}) - {q1}/{qx}/{q2} (HTTP {r.status_code})", flush=True)
             except Exception as e:
-                print(f"Errore evento: {e}")
+                print(f"Errore evento: {e}", flush=True)
                 continue
 
         chiusi = driver.find_elements(By.CLASS_NAME, "box-close")
+        print(f"[DEBUG] Trovati {len(chiusi)} risultati", flush=True)
+        
         for box in chiusi:
             try:
                 p_raw = box.find_element(By.CLASS_NAME, "box-data").get_attribute('textContent')
@@ -97,24 +121,24 @@ def esegui_scansione():
                     p_id_prefix = f"{p_parts[0]}_{p_parts[1]}"
                     res = box.find_element(By.TAG_NAME, "h3").get_attribute('textContent').strip()
                     if res:
-                        requests.post(API_URL, data={'palinsesto_prefix': p_id_prefix, 'result': res})
-                        print(f"[RISULTATO] {p_id_prefix} -> {res}")
+                        r = requests.post(API_URL, data={'palinsesto_prefix': p_id_prefix, 'result': res}, timeout=10)
+                        print(f"[RISULTATO] {p_id_prefix} -> {res} (HTTP {r.status_code})", flush=True)
             except: 
                 continue
 
     except Exception as e:
-        print(f"Errore generale: {e}")
+        print(f"Errore generale: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
-if __name__ == "__main__":
-    print("=== VirtualPRO Scraper su Render (Web Service Mode) ===")
-    while True:
-        try:
-            esegui_scansione()
-            print("Attendo 120 secondi...")
-            time.sleep(120)
-        except KeyboardInterrupt:
-            print("\nFermato manualmente")
-            break
-        except Exception as e:
-            print(f"Errore loop: {e}")
-            time.sleep(60)
+print("=== Avvio loop scraper ===", flush=True)
+while True:
+    try:
+        esegui_scansione()
+        print("Attendo 120 secondi...", flush=True)
+        time.sleep(120)
+    except KeyboardInterrupt:
+        print("\nFermato manualmente", flush=True)
+        break
+    except Exception as e:
+        print(f"Errore loop: {e}", flush=True)
+        time.sleep(60)
