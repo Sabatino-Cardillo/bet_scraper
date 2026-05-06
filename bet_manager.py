@@ -15,7 +15,7 @@ BETFLAG_URL = "https://www.betflag.it/virtual"
 print("=== AVVIO SERVIZIO RENDER ===", flush=True)
 print(f"Python version: {sys.version}", flush=True)
 
-# === FAKE WEB SERVER ===
+# === FAKE WEB SERVER (per tenere Render attivo) ===
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -32,6 +32,7 @@ def run_webserver():
     except Exception as e:
         print(f"[WEB] ERRORE: {e}", flush=True)
 
+# Avvia il web server in background
 Thread(target=run_webserver, daemon=True).start()
 
 # === CONFIGURAZIONE CHROME ===
@@ -43,16 +44,14 @@ chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920x1080")
 
-# Tentativo di specificare il binary di Chrome (Render lo mette qui)
-chrome_options.binary_location = '/usr/bin/google-chrome'
-
+# Inizializza il driver
+driver = None
 try:
     driver = webdriver.Chrome(options=chrome_options)
     print("[SETUP] Chrome avviato con successo!", flush=True)
 except Exception as e:
     print(f"[SETUP] ERRORE Chrome: {e}", flush=True)
     print(f"[SETUP] Traceback: {traceback.format_exc()}", flush=True)
-    driver = None
 
 def esegui_scansione():
     if driver is None:
@@ -65,11 +64,13 @@ def esegui_scansione():
         driver.get(BETFLAG_URL)
         time.sleep(10)
         
+        # Cerca gli eventi
         eventi = driver.find_elements(By.CLASS_NAME, "box-home.event")
         print(f"[DEBUG] Trovati {len(eventi)} eventi", flush=True)
         
         for event in eventi:
             try:
+                # Estrai palinsesto
                 pal_raw = event.find_element(By.CLASS_NAME, "box-data").get_attribute('textContent')
                 parts = pal_raw.replace('P.', '').replace('A.', '').split()
                 date_str = datetime.now().strftime('%Y%m%d')
@@ -78,14 +79,17 @@ def esegui_scansione():
                 else:
                     continue
 
+                # Estrai squadre
                 raw_teams = event.find_element(By.CLASS_NAME, "desavv").get_attribute('textContent').strip()
                 home = raw_teams.upper()
 
+                # Estrai bookmaker
                 try:
                     bookmaker = event.find_element(By.CSS_SELECTOR, ".box-event-info h3").get_attribute('textContent').strip()
                 except:
                     bookmaker = "Betflag"
 
+                # Estrai quote
                 btns = event.find_element(By.ID, "C9").find_elements(By.CLASS_NAME, "btn.bOdd")
                 if len(btns) >= 3:
                     q1 = btns[0].get_attribute('textContent').strip()
@@ -97,6 +101,7 @@ def esegui_scansione():
                 if not q1 or q1 in ["0", "0.00", "0,00"]: 
                     continue
 
+                # Invia al database
                 r = requests.post(API_URL, data={
                     'palinsesto': pal_id,
                     'home': home,
@@ -106,12 +111,14 @@ def esegui_scansione():
                     'q2': q2.replace(',', '.')
                 }, timeout=10)
                 print(f"[OK] {home} ({bookmaker}) - {q1}/{qx}/{q2} (HTTP {r.status_code})", flush=True)
+                
             except Exception as e:
                 print(f"Errore evento: {e}", flush=True)
                 continue
 
+        # Gestione risultati chiusi
         chiusi = driver.find_elements(By.CLASS_NAME, "box-close")
-        print(f"[DEBUG] Trovati {len(chiusi)} risultati", flush=True)
+        print(f"[DEBUG] Trovati {len(chiusi)} risultati chiusi", flush=True)
         
         for box in chiusi:
             try:
@@ -130,6 +137,7 @@ def esegui_scansione():
         print(f"Errore generale: {e}", flush=True)
         print(traceback.format_exc(), flush=True)
 
+# === LOOP PRINCIPALE ===
 print("=== Avvio loop scraper ===", flush=True)
 while True:
     try:
